@@ -22,10 +22,19 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 50
     ALLOWED_EXTENSIONS: set[str] = {".kml", ".zip"}
 
+    # ZIP extraction & security limits
+    MAX_ZIP_MEMBERS: int = 100
+    MAX_ZIP_UNCOMPRESSED_SIZE_MB: int = 100
+
     @property
     def max_upload_size_bytes(self) -> int:
         """Return maximum upload size in bytes."""
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def max_zip_uncompressed_size_bytes(self) -> int:
+        """Return maximum uncompressed ZIP size in bytes."""
+        return self.MAX_ZIP_UNCOMPRESSED_SIZE_MB * 1024 * 1024
 
     model_config = SettingsConfigDict(
         env_file=".env",
