@@ -14,7 +14,7 @@ app = FastAPI(
 )
 
 # Register API routers
-app.include_router(files.router)
+app.include_router(files.router, prefix="/api")
 
 
 @app.get("/health", tags=["health"])

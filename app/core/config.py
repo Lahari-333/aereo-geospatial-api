@@ -14,8 +14,18 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # Storage paths
+    BASE_DIR: Path = BASE_DIR
     UPLOAD_DIR: Path = BASE_DIR / "uploads"
     PROCESSED_DIR: Path = BASE_DIR / "processed"
+
+    # File upload configurations
+    MAX_UPLOAD_SIZE_MB: int = 50
+    ALLOWED_EXTENSIONS: set[str] = {".kml", ".zip"}
+
+    @property
+    def max_upload_size_bytes(self) -> int:
+        """Return maximum upload size in bytes."""
+        return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
     model_config = SettingsConfigDict(
         env_file=".env",
