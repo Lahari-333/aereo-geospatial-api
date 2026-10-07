@@ -17,10 +17,26 @@ async def lifespan(app: FastAPI):
     yield
 
 
+tags_metadata = [
+    {
+        "name": "files",
+        "description": "Geospatial vector file operations: multipart upload, parsing, measurement retrieval, and record deletion.",
+    },
+    {
+        "name": "health",
+        "description": "Health check and service liveness probe.",
+    },
+]
+
 app = FastAPI(
-    title=settings.APP_NAME,
+    title="AEREO Geospatial File Measurement API",
     version=settings.VERSION,
-    description="Backend API for geospatial file parsing and geometric measurements.",
+    description=(
+        "Production backend API for parsing geospatial vector files (.kml and .zip containing Shapefiles), "
+        "managing CRS transformations to UTM projections, and calculating planar metric measurements "
+        "(polygon area in m² and linestring length in m)."
+    ),
+    openapi_tags=tags_metadata,
     lifespan=lifespan,
 )
 
@@ -28,7 +44,12 @@ app = FastAPI(
 app.include_router(files.router, prefix="/api")
 
 
-@app.get("/health", tags=["health"])
+@app.get(
+    "/health",
+    tags=["health"],
+    summary="Health check",
+    description="Verify API service availability.",
+)
 async def health_check() -> dict[str, str]:
     """Health check endpoint returning application status."""
     return {"status": "ok"}
