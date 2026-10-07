@@ -90,9 +90,34 @@ def test_point_handling(measurement_service: MeasurementService) -> None:
 
 
 def test_already_projected_crs(measurement_service: MeasurementService) -> None:
-    """D. Verify measurement service consumes already projected CRS directly."""
-    # 100m x 200m rectangle in Web Mercator
-    rect = shapely.Polygon([(0, 0), (0, 200), (100, 200), (100, 0), (0, 0)])
+    """D. Verify measurement service consumes already projected suitable metric CRS directly."""
+    # 100m x 200m rectangle in UTM Zone 43N (EPSG:32643)
+    rect = shapely.Polygon([(500000, 1000000), (500000, 1000200), (500100, 1000200), (500100, 1000000), (500000, 1000000)])
+    gdf = gpd.GeoDataFrame([{"id": 1}], geometry=[rect], crs="EPSG:32643")
+
+    results = measurement_service.calculate_measurements(gdf)
+    assert len(results) == 1
+    res = results[0]
+
+    assert res.measurement_type == "area"
+    assert res.unit == "square_meters"
+    assert res.source_crs == "EPSG:32643"
+    assert res.measurement_crs == "EPSG:32643"
+    assert pytest.approx(res.value, rel=1e-3) == 20000.0
+
+
+def test_web_mercator_3857_reprojected_to_utm_for_accurate_measurement(
+    measurement_service: MeasurementService,
+) -> None:
+    """Verify EPSG:3857 is NOT used directly for metric measurement due to Web Mercator scale distortion."""
+    # Bangalore polygon defined in Web Mercator
+    rect = shapely.Polygon([
+        (8637000.0, 1456000.0),
+        (8637000.0, 1456200.0),
+        (8637100.0, 1456200.0),
+        (8637100.0, 1456000.0),
+        (8637000.0, 1456000.0),
+    ])
     gdf = gpd.GeoDataFrame([{"id": 1}], geometry=[rect], crs="EPSG:3857")
 
     results = measurement_service.calculate_measurements(gdf)
@@ -102,8 +127,33 @@ def test_already_projected_crs(measurement_service: MeasurementService) -> None:
     assert res.measurement_type == "area"
     assert res.unit == "square_meters"
     assert res.source_crs == "EPSG:3857"
-    assert res.measurement_crs == "EPSG:3857"
-    assert pytest.approx(res.value, rel=1e-3) == 20000.0
+    # Crucial requirement: measurement_crs MUST NOT be EPSG:3857
+    assert res.measurement_crs != "EPSG:3857"
+    assert res.measurement_crs == "EPSG:32643"
+    assert res.value is not None
+    assert res.value > 0
+
+
+def test_non_metric_units_reprojected_to_utm(measurement_service: MeasurementService) -> None:
+    """Verify projected CRS with US survey feet units (EPSG:2227) is reprojected to metric UTM."""
+    rect = shapely.Polygon([
+        (6000000.0, 2100000.0),
+        (6000000.0, 2101000.0),
+        (6001000.0, 2101000.0),
+        (6001000.0, 2100000.0),
+        (6000000.0, 2100000.0),
+    ])
+    gdf = gpd.GeoDataFrame([{"id": 1}], geometry=[rect], crs="EPSG:2227")
+
+    results = measurement_service.calculate_measurements(gdf)
+    assert len(results) == 1
+    res = results[0]
+
+    assert res.measurement_type == "area"
+    assert res.unit == "square_meters"
+    assert res.source_crs == "EPSG:2227"
+    assert res.measurement_crs == "EPSG:32610"
+    assert res.value is not None
 
 
 def test_missing_crs_rejected(measurement_service: MeasurementService) -> None:
@@ -158,7 +208,7 @@ def test_multipolygon_area(measurement_service: MeasurementService) -> None:
     poly2 = shapely.Polygon([(20, 20), (20, 30), (30, 30), (30, 20), (20, 20)])  # 100 m²
     multipoly = shapely.MultiPolygon([poly1, poly2])
 
-    gdf = gpd.GeoDataFrame([{"id": 1}], geometry=[multipoly], crs="EPSG:3857")
+    gdf = gpd.GeoDataFrame([{"id": 1}], geometry=[multipoly], crs="EPSG:32643")
     results = measurement_service.calculate_measurements(gdf)
     assert len(results) == 1
     res = results[0]
@@ -175,7 +225,7 @@ def test_multilinestring_length(measurement_service: MeasurementService) -> None
     line2 = shapely.LineString([(10, 10), (10, 70)])  # 60m
     multiline = shapely.MultiLineString([line1, line2])
 
-    gdf = gpd.GeoDataFrame([{"id": 1}], geometry=[multiline], crs="EPSG:3857")
+    gdf = gpd.GeoDataFrame([{"id": 1}], geometry=[multiline], crs="EPSG:32643")
     results = measurement_service.calculate_measurements(gdf)
     assert len(results) == 1
     res = results[0]

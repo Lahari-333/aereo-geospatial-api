@@ -75,63 +75,72 @@ async def upload_file(
     stored_path = upload_service.upload_dir / upload_record.stored_filename
 
     try:
-        processing_result = processor.process_file(
-            file_path=stored_path,
-            file_type=upload_record.file_type,
-            file_id=upload_record.id,
-        )
-    except GeospatialProcessingError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-
-    # Calculate metric measurements if dataset has a valid CRS and geometries
-    measurement_crs_str: str | None = None
-    calculated_measurements = []
-
-    if processing_result.gdf is not None and not processing_result.has_missing_crs:
         try:
-            calculated_measurements = measurer.calculate_measurements(processing_result.gdf)
-            # Find the projected measurement CRS used for area/length
-            for m in calculated_measurements:
-                if m.measurement_crs:
-                    measurement_crs_str = m.measurement_crs
-                    break
-        except MissingCRSError:
-            pass
+            processing_result = processor.process_file(
+                file_path=stored_path,
+                file_type=upload_record.file_type,
+                file_id=upload_record.id,
+            )
+        except GeospatialProcessingError as exc:
+            if stored_path.exists():
+                stored_path.unlink()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
 
-    # Persist file record and feature measurements
-    file_entity = FileRecord(
-        id=str(upload_record.id),
-        filename=upload_record.filename,
-        stored_filename=upload_record.stored_filename,
-        file_type=upload_record.file_type,
-        size_bytes=upload_record.size_bytes,
-        status="COMPLETED",
-        feature_count=processing_result.feature_count,
-        crs=processing_result.crs,
-        measurement_crs=measurement_crs_str,
-    )
-    file_entity.geometry_types = processing_result.geometry_types
+        # Calculate metric measurements if dataset has a valid CRS and geometries
+        measurement_crs_str: str | None = None
+        calculated_measurements = []
 
-    # Add measurement records
-    for m in calculated_measurements:
-        meas_entity = MeasurementRecord(
-            feature_id=m.feature_id,
-            geometry_type=m.geometry_type,
-            measurement_type=m.measurement_type,
-            value=m.value,
-            unit=m.unit,
-            source_crs=m.source_crs,
-            measurement_crs=m.measurement_crs,
-            notes=m.notes,
+        if processing_result.gdf is not None and not processing_result.has_missing_crs:
+            try:
+                calculated_measurements = measurer.calculate_measurements(processing_result.gdf)
+                # Find the projected measurement CRS used for area/length
+                for m in calculated_measurements:
+                    if m.measurement_crs:
+                        measurement_crs_str = m.measurement_crs
+                        break
+            except MissingCRSError:
+                pass
+
+        # Persist file record and feature measurements
+        file_entity = FileRecord(
+            id=str(upload_record.id),
+            filename=upload_record.filename,
+            stored_filename=upload_record.stored_filename,
+            file_type=upload_record.file_type,
+            size_bytes=upload_record.size_bytes,
+            status="COMPLETED",
+            feature_count=processing_result.feature_count,
+            crs=processing_result.crs,
+            measurement_crs=measurement_crs_str,
         )
-        file_entity.measurements.append(meas_entity)
+        file_entity.geometry_types = processing_result.geometry_types
 
-    db.add(file_entity)
-    db.commit()
-    db.refresh(file_entity)
+        # Add measurement records
+        for m in calculated_measurements:
+            meas_entity = MeasurementRecord(
+                feature_id=m.feature_id,
+                geometry_type=m.geometry_type,
+                measurement_type=m.measurement_type,
+                value=m.value,
+                unit=m.unit,
+                source_crs=m.source_crs,
+                measurement_crs=m.measurement_crs,
+                notes=m.notes,
+            )
+            file_entity.measurements.append(meas_entity)
+
+        db.add(file_entity)
+        db.commit()
+        db.refresh(file_entity)
+
+    except Exception:
+        db.rollback()
+        if stored_path.exists():
+            stored_path.unlink()
+        raise
 
     return FileUploadResponse(
         id=upload_record.id,
@@ -193,6 +202,12 @@ def list_files(
     summary="Get file details",
     description="Retrieve file metadata, processing status, and CRS summary for a given file ID.",
 )
+@router.get(
+    "/{file_id}/",
+    response_model=FileDetailResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
 def get_file(
     file_id: UUID,
     db: Annotated[Session, Depends(get_db)],
@@ -227,6 +242,12 @@ def get_file(
     status_code=status.HTTP_200_OK,
     summary="Get feature measurements",
     description="Retrieve geometric measurements (area, length) for each feature in a file.",
+)
+@router.get(
+    "/{file_id}/measurements/",
+    response_model=FileMeasurementsResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 def get_file_measurements(
     file_id: UUID,
@@ -264,6 +285,11 @@ def get_file_measurements(
     status_code=status.HTTP_200_OK,
     summary="Delete a file",
     description="Remove a file record and its persistent measurements, and delete the file from disk.",
+)
+@router.delete(
+    "/{file_id}/",
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
 )
 def delete_file(
     file_id: UUID,

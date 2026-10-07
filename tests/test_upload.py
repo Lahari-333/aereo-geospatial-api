@@ -354,3 +354,95 @@ def test_delete_file(isolated_storage, client: TestClient) -> None:
 
     # Confirm 404 on subsequent get
     assert client.get(f"/api/files/{file_id}").status_code == 404
+
+
+def test_trailing_slash_endpoints_supported(isolated_storage, client: TestClient) -> None:
+    """17. Verify that endpoints with trailing slashes resolve with 200 OK without errors."""
+    upload_res = client.post(
+        "/api/files/",
+        files={"file": ("slash_test.kml", io.BytesIO(create_valid_kml_bytes()), "application/vnd.google-earth.kml+xml")},
+    )
+    assert upload_res.status_code == 201
+    file_id = upload_res.json()["id"]
+
+    # GET /api/files/{id}/
+    get_res = client.get(f"/api/files/{file_id}/")
+    assert get_res.status_code == 200
+    assert get_res.json()["id"] == file_id
+
+    # GET /api/files/{id}/measurements/
+    meas_res = client.get(f"/api/files/{file_id}/measurements/")
+    assert meas_res.status_code == 200
+    assert meas_res.json()["file_id"] == file_id
+
+    # DELETE /api/files/{id}/
+    del_res = client.delete(f"/api/files/{file_id}/")
+    assert del_res.status_code == 200
+    assert del_res.json()["status"] == "deleted"
+
+
+def test_missing_prj_shapefile_returns_400_on_measurements(isolated_storage, client: TestClient) -> None:
+    """18. Verify missing CRS shapefile allows upload but rejects measurement request with 400."""
+    zip_without_prj = create_valid_shapefile_zip_bytes(include_prj=False)
+    upload_res = client.post(
+        "/api/files/",
+        files={"file": ("no_crs.zip", io.BytesIO(zip_without_prj), "application/zip")},
+    )
+    assert upload_res.status_code == 201
+    data = upload_res.json()
+    assert data["crs"] is None
+    file_id = data["id"]
+
+    # GET metadata succeeds
+    detail_res = client.get(f"/api/files/{file_id}/")
+    assert detail_res.status_code == 200
+    assert detail_res.json()["crs"] is None
+
+    # GET measurements fails with 400 Bad Request
+    meas_res = client.get(f"/api/files/{file_id}/measurements/")
+    assert meas_res.status_code == 400
+    assert "source dataset CRS is missing" in meas_res.json()["detail"]
+
+
+def test_failed_processing_cleans_up_disk_and_leaves_no_db_records(isolated_storage, client: TestClient) -> None:
+    """19. Verify that a malformed file leaves NO leaked files on disk and NO database records."""
+    upload_dir, _ = isolated_storage
+    malformed_kml = create_malformed_kml_bytes()
+
+    res = client.post(
+        "/api/files/",
+        files={"file": ("broken.kml", io.BytesIO(malformed_kml), "application/vnd.google-earth.kml+xml")},
+    )
+    assert res.status_code == 400
+
+    # Ensure no stored file remains on disk
+    stored_files = [p for p in upload_dir.iterdir() if p.is_file() and p.name != ".gitkeep"]
+    assert len(stored_files) == 0
+
+    # Ensure database has 0 records
+    list_res = client.get("/api/files/")
+    assert list_res.status_code == 200
+    assert list_res.json()["total"] == 0
+
+
+def test_database_persistence_across_sessions(isolated_storage, client: TestClient) -> None:
+    """20. Verify records and measurements persist reliably and are retrievable across sessions."""
+    upload_res = client.post(
+        "/api/files/",
+        files={"file": ("parcels.zip", io.BytesIO(create_valid_shapefile_zip_bytes()), "application/zip")},
+    )
+    assert upload_res.status_code == 201
+    file_id = upload_res.json()["id"]
+
+    # Simulate fresh request/session query
+    fresh_get = client.get(f"/api/files/{file_id}")
+    assert fresh_get.status_code == 200
+    assert fresh_get.json()["filename"] == "parcels.zip"
+    assert fresh_get.json()["feature_count"] == 1
+
+    fresh_meas = client.get(f"/api/files/{file_id}/measurements")
+    assert fresh_meas.status_code == 200
+    assert len(fresh_meas.json()["measurements"]) == 1
+    assert fresh_meas.json()["measurements"][0]["measurement_type"] == "area"
+    assert fresh_meas.json()["measurements"][0]["unit"] == "square_meters"
+
