@@ -61,6 +61,7 @@ class FileProcessingResult:
     crs: str | None
     features: list[NormalizedFeature]
     has_missing_crs: bool = False
+    gdf: gpd.GeoDataFrame | None = None
 
 
 class GeospatialFileProcessor:
@@ -124,6 +125,7 @@ class GeospatialFileProcessor:
             crs=crs_str,
             features=features,
             has_missing_crs=(crs_str is None),
+            gdf=gdf,
         )
 
     def _process_shapefile_zip(self, file_path: Path, file_id: uuid.UUID) -> FileProcessingResult:
@@ -153,6 +155,7 @@ class GeospatialFileProcessor:
                 crs=crs_str,
                 features=features,
                 has_missing_crs=(crs_str is None),
+                gdf=gdf,
             )
 
         finally:
