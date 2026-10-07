@@ -1,13 +1,16 @@
-"""Automated tests for the geospatial file upload and processing endpoint (POST /api/files/)."""
+"""Automated tests for geospatial file upload, queries, and measurement endpoints."""
 
 import io
 from pathlib import Path
 import uuid
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.core.config import Settings, get_settings
 from app.main import app
+from app.storage.database import Base, get_db
 from tests.fixtures import (
     create_malformed_kml_bytes,
     create_valid_kml_bytes,
@@ -18,22 +21,40 @@ from tests.fixtures import (
 
 @pytest.fixture
 def isolated_storage(tmp_path: Path):
-    """Fixture providing isolated upload directory and customized settings for testing."""
+    """Fixture providing isolated upload directory, test database, and customized settings."""
     test_upload_dir = tmp_path / "test_uploads"
     test_processed_dir = tmp_path / "test_processed"
     test_upload_dir.mkdir(parents=True, exist_ok=True)
     test_processed_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use a small 1 MB limit to easily test file size boundaries
+    db_path = tmp_path / "test.db"
+    test_db_url = f"sqlite:///{db_path}"
+
     test_settings = Settings(
         UPLOAD_DIR=test_upload_dir,
         PROCESSED_DIR=test_processed_dir,
         MAX_UPLOAD_SIZE_MB=1,
+        DATABASE_URL=test_db_url,
     )
 
+    test_engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=test_engine)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
     app.dependency_overrides[get_settings] = lambda: test_settings
+    app.dependency_overrides[get_db] = override_get_db
+
     yield test_upload_dir, test_settings
+
     app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=test_engine)
 
 
 @pytest.fixture
@@ -43,7 +64,7 @@ def client(isolated_storage):
 
 
 def test_successful_kml_upload(isolated_storage, client: TestClient) -> None:
-    """1. Verify successful upload and processing of a valid .kml file."""
+    """1. Verify successful upload, processing, and persistence of a valid .kml file."""
     kml_content = create_valid_kml_bytes()
 
     response = client.post(
@@ -65,7 +86,7 @@ def test_successful_kml_upload(isolated_storage, client: TestClient) -> None:
 
 
 def test_successful_zip_upload(isolated_storage, client: TestClient) -> None:
-    """2. Verify successful upload and processing of a valid Shapefile .zip file."""
+    """2. Verify successful upload, processing, and persistence of a valid Shapefile .zip file."""
     zip_bytes = create_valid_shapefile_zip_bytes()
 
     response = client.post(
@@ -238,3 +259,98 @@ def test_zip_without_shapefile_upload_rejected(isolated_storage, client: TestCli
     )
     assert response.status_code == 400
     assert "does not contain an ESRI Shapefile" in response.json()["detail"]
+
+
+def test_get_file_and_list_files(isolated_storage, client: TestClient) -> None:
+    """13. Verify querying file metadata via GET /api/files/ and GET /api/files/{id}."""
+    # 1. Initially empty
+    list_res = client.get("/api/files/")
+    assert list_res.status_code == 200
+    assert list_res.json()["total"] == 0
+
+    # 2. Upload file
+    upload_res = client.post(
+        "/api/files/",
+        files={"file": ("survey.kml", io.BytesIO(create_valid_kml_bytes()), "application/vnd.google-earth.kml+xml")},
+    )
+    assert upload_res.status_code == 201
+    file_id = upload_res.json()["id"]
+
+    # 3. List contains 1 file
+    list_res2 = client.get("/api/files/")
+    assert list_res2.status_code == 200
+    assert list_res2.json()["total"] == 1
+    assert list_res2.json()["files"][0]["id"] == file_id
+
+    # 4. Detail endpoint
+    detail_res = client.get(f"/api/files/{file_id}")
+    assert detail_res.status_code == 200
+    detail = detail_res.json()
+    assert detail["id"] == file_id
+    assert detail["filename"] == "survey.kml"
+    assert detail["status"] == "COMPLETED"
+    assert detail["feature_count"] == 1
+    assert "created_at" in detail
+
+
+def test_get_file_measurements(isolated_storage, client: TestClient) -> None:
+    """14. Verify retrieving feature measurements via GET /api/files/{id}/measurements."""
+    # Upload Shapefile ZIP with Polygon in EPSG:4326
+    upload_res = client.post(
+        "/api/files/",
+        files={"file": ("parcels.zip", io.BytesIO(create_valid_shapefile_zip_bytes()), "application/zip")},
+    )
+    assert upload_res.status_code == 201
+    file_id = upload_res.json()["id"]
+
+    # Query measurements
+    meas_res = client.get(f"/api/files/{file_id}/measurements")
+    assert meas_res.status_code == 200
+    data = meas_res.json()
+    assert data["file_id"] == file_id
+    assert data["status"] == "COMPLETED"
+    assert data["total_features"] == 1
+    assert len(data["measurements"]) == 1
+
+    m = data["measurements"][0]
+    assert m["feature_id"] == 0
+    assert m["geometry_type"] == "Polygon"
+    assert m["measurement_type"] == "area"
+    assert m["unit"] == "square_meters"
+    assert m["value"] > 0
+    assert m["source_crs"] == "EPSG:4326"
+    assert m["measurement_crs"] is not None
+
+
+def test_get_file_not_found(isolated_storage, client: TestClient) -> None:
+    """15. Verify 404 Not Found for non-existent file IDs."""
+    fake_id = str(uuid.uuid4())
+    res = client.get(f"/api/files/{fake_id}")
+    assert res.status_code == 404
+    assert "not found" in res.json()["detail"].lower()
+
+    meas_res = client.get(f"/api/files/{fake_id}/measurements")
+    assert meas_res.status_code == 404
+
+
+def test_delete_file(isolated_storage, client: TestClient) -> None:
+    """16. Verify deleting a file removes it from storage and database."""
+    upload_dir, _ = isolated_storage
+    upload_res = client.post(
+        "/api/files/",
+        files={"file": ("to_delete.kml", io.BytesIO(create_valid_kml_bytes()), "application/vnd.google-earth.kml+xml")},
+    )
+    file_id = upload_res.json()["id"]
+    stored_name = upload_res.json()["stored_filename"]
+    assert (upload_dir / stored_name).exists()
+
+    # Delete
+    del_res = client.delete(f"/api/files/{file_id}")
+    assert del_res.status_code == 200
+    assert del_res.json()["status"] == "deleted"
+
+    # Confirm removed from disk
+    assert not (upload_dir / stored_name).exists()
+
+    # Confirm 404 on subsequent get
+    assert client.get(f"/api/files/{file_id}").status_code == 404

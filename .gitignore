@@ -35,3 +35,8 @@ processed/*
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3

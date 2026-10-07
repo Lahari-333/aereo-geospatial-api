@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     UPLOAD_DIR: Path = BASE_DIR / "uploads"
     PROCESSED_DIR: Path = BASE_DIR / "processed"
 
+    # Database connection URL
+    DATABASE_URL: str = f"sqlite:///{BASE_DIR.as_posix()}/geospatial.db"
+
     # File upload configurations
     MAX_UPLOAD_SIZE_MB: int = 50
     ALLOWED_EXTENSIONS: set[str] = {".kml", ".zip"}

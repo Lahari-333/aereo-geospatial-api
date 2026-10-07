@@ -8,19 +8,21 @@ This project is organized with a clean layered architecture separating HTTP rout
 
 ## Current Status
 
-> **Note**: Steps 1 through 5 are implemented and verified.
+> **Note**: Steps 1 through 6 are fully implemented and verified with 58 automated tests passing.
 > 
 > - **Architecture & Setup (Step 1):** Layered FastAPI project structure and configuration.
 > - **Geospatial Environment (Step 2):** GeoPandas, Shapely, PyProj, and Pyogrio integration.
 > - **File Upload API (Step 3):** Secure `POST /api/files/` endpoint with chunked streaming and size limits.
 > - **Geospatial Processing (Step 4):** KML and Shapefile ZIP extraction with Zip Slip defense and companion verification.
 > - **Measurement & CRS Handling (Step 5):** Metric area/length calculations and automated UTM reprojection strategy.
+> - **Database Persistence & REST APIs (Step 6):** Relational persistence with SQLAlchemy, file query, measurement retrieval, and deletion endpoints.
 
 ## Technology Stack
 
 - **Language:** Python 3.11+
 - **Framework:** FastAPI
 - **ASGI Server:** Uvicorn
+- **ORM / Database:** SQLAlchemy (SQLite default, PostgreSQL ready)
 - **Configuration & Validation:** Pydantic / Pydantic Settings
 - **Geospatial Engines:** GeoPandas, Shapely, PyProj, Pyogrio
 - **Testing:** Pytest, HTTPX
@@ -210,3 +212,152 @@ Run the complete test suite using `pytest`:
 ```bash
 pytest -v
 ```
+
+## API Reference
+
+### 1. Health Check
+- **Endpoint:** `GET /health`
+- **Description:** Verifies service availability.
+- **Example Response:**
+  ```json
+  {
+    "status": "ok"
+  }
+  ```
+
+### 2. Upload Geospatial File
+- **Endpoint:** `POST /api/files/`
+- **Description:** Uploads a `.kml` or `.zip` (containing Shapefile) file via multipart form-data. Validates file integrity, parses geospatial features, determines CRS and reprojects to UTM if necessary, calculates metric area/length, and persists records to the database.
+- **Form parameter:** `file` (Binary)
+- **Example cURL:**
+  ```bash
+  curl -X POST "http://localhost:8000/api/files/" \
+    -F "file=@sample_polygon.kml"
+  ```
+- **Example Response (201 Created):**
+  ```json
+  {
+    "file_id": "7f8b9e6a-3c4d-5e6f-a1b2-c3d4e5f6a7b8",
+    "original_filename": "sample_polygon.kml",
+    "file_type": "kml",
+    "file_size": 2048,
+    "upload_timestamp": "2026-10-07T09:00:00Z",
+    "status": "processed",
+    "features_count": 1,
+    "features": [
+      {
+        "feature_id": "0",
+        "geometry_type": "Polygon",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [[[77.59, 12.97], [77.60, 12.97], [77.60, 12.98], [77.59, 12.97]]]
+        },
+        "crs": "EPSG:4326",
+        "properties": {
+          "name": "Zone A"
+        },
+        "measurement": {
+          "feature_id": "0",
+          "geometry_type": "Polygon",
+          "measurement_type": "area",
+          "value": 1184200.5,
+          "unit": "square_meters",
+          "source_crs": "EPSG:4326",
+          "measurement_crs": "EPSG:32643",
+          "notes": null
+        }
+      }
+    ],
+    "message": "File processed and measured successfully."
+  }
+  ```
+
+### 3. List All Files
+- **Endpoint:** `GET /api/files/`
+- **Query Parameters:** `skip` (default 0), `limit` (default 100, max 500)
+- **Example cURL:**
+  ```bash
+  curl -X GET "http://localhost:8000/api/files/?skip=0&limit=10"
+  ```
+- **Example Response (200 OK):**
+  ```json
+  {
+    "total": 1,
+    "items": [
+      {
+        "file_id": "7f8b9e6a-3c4d-5e6f-a1b2-c3d4e5f6a7b8",
+        "original_filename": "sample_polygon.kml",
+        "file_type": "kml",
+        "file_size": 2048,
+        "upload_timestamp": "2026-10-07T09:00:00Z",
+        "status": "processed",
+        "features_count": 1,
+        "crs": "EPSG:4326"
+      }
+    ]
+  }
+  ```
+
+### 4. Get File Details
+- **Endpoint:** `GET /api/files/{id}`
+- **Example cURL:**
+  ```bash
+  curl -X GET "http://localhost:8000/api/files/7f8b9e6a-3c4d-5e6f-a1b2-c3d4e5f6a7b8"
+  ```
+- **Example Response (200 OK):**
+  ```json
+  {
+    "file_id": "7f8b9e6a-3c4d-5e6f-a1b2-c3d4e5f6a7b8",
+    "original_filename": "sample_polygon.kml",
+    "file_type": "kml",
+    "file_size": 2048,
+    "upload_timestamp": "2026-10-07T09:00:00Z",
+    "status": "processed",
+    "features_count": 1,
+    "crs": "EPSG:4326",
+    "storage_exists": true
+  }
+  ```
+
+### 5. Get File Measurements
+- **Endpoint:** `GET /api/files/{id}/measurements`
+- **Description:** Returns geometric measurements for all features in the file.
+- **Example cURL:**
+  ```bash
+  curl -X GET "http://localhost:8000/api/files/7f8b9e6a-3c4d-5e6f-a1b2-c3d4e5f6a7b8/measurements"
+  ```
+- **Example Response (200 OK):**
+  ```json
+  {
+    "file_id": "7f8b9e6a-3c4d-5e6f-a1b2-c3d4e5f6a7b8",
+    "total_features": 1,
+    "measurements": [
+      {
+        "feature_id": "0",
+        "geometry_type": "Polygon",
+        "measurement_type": "area",
+        "value": 1184200.5,
+        "unit": "square_meters",
+        "source_crs": "EPSG:4326",
+        "measurement_crs": "EPSG:32643",
+        "notes": null
+      }
+    ]
+  }
+  ```
+
+### 6. Delete File
+- **Endpoint:** `DELETE /api/files/{id}`
+- **Description:** Removes the database record, associated measurement rows, and stored physical file from disk.
+- **Example cURL:**
+  ```bash
+  curl -X DELETE "http://localhost:8000/api/files/7f8b9e6a-3c4d-5e6f-a1b2-c3d4e5f6a7b8"
+  ```
+- **Example Response (200 OK):**
+  ```json
+  {
+    "file_id": "7f8b9e6a-3c4d-5e6f-a1b2-c3d4e5f6a7b8",
+    "status": "deleted",
+    "message": "File and associated measurements successfully deleted."
+  }
+  ```

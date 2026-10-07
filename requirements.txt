@@ -4,6 +4,9 @@ uvicorn[standard]>=0.30.0
 pydantic-settings>=2.4.0
 python-multipart>=0.0.12
 
+# Database & persistence
+sqlalchemy>=2.0.0
+
 # Geospatial libraries
 geopandas>=1.0.0
 shapely>=2.0.0
