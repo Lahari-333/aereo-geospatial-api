@@ -2,6 +2,8 @@
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import files
 from app.core.config import get_settings
@@ -20,7 +22,11 @@ async def lifespan(app: FastAPI):
 tags_metadata = [
     {
         "name": "files",
-        "description": "Geospatial vector file operations: multipart upload, parsing, measurement retrieval, and record deletion.",
+        "description": "Geospatial vector file operations: multipart upload, batch processing, measurement retrieval, and RFC 7946 GeoJSON export.",
+    },
+    {
+        "name": "viewer",
+        "description": "Interactive Leaflet geospatial visualization dashboard.",
     },
     {
         "name": "health",
@@ -33,12 +39,16 @@ app = FastAPI(
     version=settings.VERSION,
     description=(
         "Production backend API for parsing geospatial vector files (.kml and .zip containing Shapefiles), "
-        "managing CRS transformations to UTM projections, and calculating planar metric measurements "
-        "(polygon area in m² and linestring length in m)."
+        "managing CRS transformations to UTM projections, calculating planar metric measurements "
+        "(polygon area in m² and linestring length in m), batch processing, and RFC 7946 GeoJSON export."
     ),
     openapi_tags=tags_metadata,
     lifespan=lifespan,
 )
+
+# Mount static viewer assets
+if settings.STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 
 # Register API routers
 app.include_router(files.router, prefix="/api")
@@ -53,3 +63,27 @@ app.include_router(files.router, prefix="/api")
 async def health_check() -> dict[str, str]:
     """Health check endpoint returning application status."""
     return {"status": "ok"}
+
+
+@app.get(
+    "/",
+    tags=["viewer"],
+    summary="Interactive Geospatial Viewer",
+    description="Serves the AEREO interactive vector map dashboard.",
+)
+@app.get(
+    "/viewer",
+    tags=["viewer"],
+    summary="Interactive Geospatial Viewer",
+    description="Serves the AEREO interactive vector map dashboard.",
+)
+@app.get(
+    "/viewer/",
+    include_in_schema=False,
+)
+async def serve_viewer():
+    """Serve the interactive Leaflet geospatial web viewer."""
+    index_file = settings.STATIC_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return {"message": "AEREO Geospatial API is running. Viewer index.html not found."}

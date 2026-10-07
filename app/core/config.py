@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # File upload configurations
     MAX_UPLOAD_SIZE_MB: int = 50
     ALLOWED_EXTENSIONS: set[str] = {".kml", ".zip"}
+    MAX_BATCH_FILES: int = 10
+
+    # Static viewer assets
+    STATIC_DIR: Path = BASE_DIR / "app" / "static"
 
     # ZIP extraction & security limits
     MAX_ZIP_MEMBERS: int = 100
@@ -52,4 +56,5 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     settings.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    settings.STATIC_DIR.mkdir(parents=True, exist_ok=True)
     return settings

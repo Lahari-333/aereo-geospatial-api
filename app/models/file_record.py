@@ -24,6 +24,12 @@ class FileRecord(Base):
     crs: Mapped[str | None] = mapped_column(String(50), nullable=True)
     measurement_crs: Mapped[str | None] = mapped_column(String(50), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_time_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_area_sqm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_length_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    _bbox: Mapped[str | None] = mapped_column("bbox", Text, nullable=True)
+    _centroid: Mapped[str | None] = mapped_column("centroid", Text, nullable=True)
+    _geojson_data: Mapped[str | None] = mapped_column("geojson_data", Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -49,6 +55,51 @@ class FileRecord(Base):
     def geometry_types(self, value: list[str]) -> None:
         """Serialize Python list of geometry types to JSON string."""
         self._geometry_types = json.dumps(value)
+
+    @property
+    def bbox(self) -> list[float] | None:
+        """Deserialize bounding box [minx, miny, maxx, maxy]."""
+        if not self._bbox:
+            return None
+        try:
+            return json.loads(self._bbox)
+        except Exception:
+            return None
+
+    @bbox.setter
+    def bbox(self, value: list[float] | None) -> None:
+        """Serialize bounding box to JSON string."""
+        self._bbox = json.dumps(value) if value is not None else None
+
+    @property
+    def centroid(self) -> list[float] | None:
+        """Deserialize centroid [longitude, latitude]."""
+        if not self._centroid:
+            return None
+        try:
+            return json.loads(self._centroid)
+        except Exception:
+            return None
+
+    @centroid.setter
+    def centroid(self, value: list[float] | None) -> None:
+        """Serialize centroid to JSON string."""
+        self._centroid = json.dumps(value) if value is not None else None
+
+    @property
+    def geojson_data(self) -> dict | None:
+        """Deserialize GeoJSON FeatureCollection dictionary."""
+        if not self._geojson_data:
+            return None
+        try:
+            return json.loads(self._geojson_data)
+        except Exception:
+            return None
+
+    @geojson_data.setter
+    def geojson_data(self, value: dict | None) -> None:
+        """Serialize GeoJSON dictionary to JSON string."""
+        self._geojson_data = json.dumps(value) if value is not None else None
 
 
 class MeasurementRecord(Base):
